@@ -3977,11 +3977,14 @@ def actionsubmit(data, actionmode=0, force_submit=False, force_prompt_gen=False,
     while(True):
         set_aibusy(1)
 
-        if(vars.model == "API"):
+        if(vars.model in ["API","CLUSTER"]):
             global tokenizer
-            tokenizer_id = requests.get(
-                vars.colaburl[:-8] + "/api/v1/model",
-            ).json()["result"]
+            if vars.model == "API":
+                tokenizer_id = requests.get(
+                    vars.colaburl[:-8] + "/api/v1/model",
+                ).json()["result"]
+            else: # For now
+                tokenizer_id = "KoboldAI/fairseq-dense-13B-Nerys-v2"
             if tokenizer_id != vars.api_tokenizer_id:
                 try:
                     if(os.path.isdir(tokenizer_id)):
@@ -4226,8 +4229,6 @@ def apiactionsubmit(data, use_memory=False, use_world_info=False, use_story=Fals
     if(vars.model == "Colab"):
         raise NotImplementedError("API generation is not supported in old Colab API mode.")
     elif(vars.model == "API"):
-        raise NotImplementedError("API generation is not supported in API mode.")
-    elif(vars.model == "CLUSTER"):
         raise NotImplementedError("API generation is not supported in API mode.")
     elif(vars.model == "OAI"):
         raise NotImplementedError("API generation is not supported in OpenAI/GooseAI mode.")
@@ -4528,6 +4529,8 @@ def calcsubmit(txt):
                 sendtocolab(utils.decodenewlines(tokenizer.decode(subtxt)), min, max)
             elif(vars.model == "API"):
                 sendtoapi(utils.decodenewlines(tokenizer.decode(subtxt)), min, max)
+            elif(vars.model == "CLUSTER"):
+                sendtosluster(utils.decodenewlines(tokenizer.decode(subtxt)), min, max)
             elif(vars.model == "OAI"):
                 oairequest(utils.decodenewlines(tokenizer.decode(subtxt)), min, max)
             elif(vars.use_colab_tpu or vars.model in ("TPUMeshTransformerGPTJ", "TPUMeshTransformerGPTNeoX")):
@@ -5049,49 +5052,56 @@ def sendtocluster(txt, min, max):
     cluster_metadata = {
         'prompt': txt,
         'params': reqdata,
+        'username': "kai_test",
     }
 
     # Create request
-    while True:
-        req = requests.post(
-            vars.colaburl[:-8] + "/generate/sync",
-            json=reqdata,
-        )
-        js = req.json()
-        if(req.status_code != 200):
-            errmsg = "KoboldAI API Error: Failed to get a reply from the server. Please check the console."
-            print("{0}{1}{2}".format(colors.RED, json.dumps(js, indent=2), colors.END))
-            emit('from_server', {'cmd': 'errmsg', 'data': errmsg}, broadcast=True)
-            set_aibusy(0)
-            return
+    print("{0}{1}{2}".format(colors.RED, vars.colaburl[:-8] + "/generate/sync", colors.END))
+    req = requests.post(
+        vars.colaburl[:-8] + "/generate/sync",
+        json=cluster_metadata,
+    )
+    js = req.json()
+    if(req.status_code == 503):
+        errmsg = "KoboldAI API Error: No available KoboldAI servers found in cluster to fulfil this request using the selected models and requested lengths."
         print("{0}{1}{2}".format(colors.RED, json.dumps(js, indent=2), colors.END))
-        genout = js
-
-        for i in range(vars.numseqs):
-            vars.lua_koboldbridge.outputs[i+1] = genout[i]
-
-        execute_outmod()
-        if(vars.lua_koboldbridge.regeneration_required):
-            vars.lua_koboldbridge.regeneration_required = False
-            genout = []
-            for i in range(vars.numseqs):
-                genout.append(vars.lua_koboldbridge.outputs[i+1])
-                assert type(genout[-1]) is str
-
-        if(len(genout) == 1):
-            genresult(genout[0])
-        else:
-            # Convert torch output format to transformers
-            seqs = []
-            for seq in genout:
-                seqs.append({"generated_text": seq})
-            if(vars.lua_koboldbridge.restart_sequence is not None and vars.lua_koboldbridge.restart_sequence > 0):
-                genresult(genout[vars.lua_koboldbridge.restart_sequence-1]["generated_text"])
-            else:
-                genselect(genout)
-
+        emit('from_server', {'cmd': 'errmsg', 'data': errmsg}, broadcast=True)
         set_aibusy(0)
         return
+    if(req.status_code != 200):
+        errmsg = "KoboldAI API Error: Failed to get a reply from the server. Please check the console."
+        print("{0}{1}{2}".format(colors.RED, json.dumps(js, indent=2), colors.END))
+        emit('from_server', {'cmd': 'errmsg', 'data': errmsg}, broadcast=True)
+        set_aibusy(0)
+        return
+    print("{0}{1}{2}".format(colors.RED, json.dumps(js, indent=2), colors.END))
+    genout = js
+
+    for i in range(vars.numseqs):
+        vars.lua_koboldbridge.outputs[i+1] = genout[i]
+
+    execute_outmod()
+    if(vars.lua_koboldbridge.regeneration_required):
+        vars.lua_koboldbridge.regeneration_required = False
+        genout = []
+        for i in range(vars.numseqs):
+            genout.append(vars.lua_koboldbridge.outputs[i+1])
+            assert type(genout[-1]) is str
+
+    if(len(genout) == 1):
+        genresult(genout[0])
+    else:
+        # Convert torch output format to transformers
+        seqs = []
+        for seq in genout:
+            seqs.append({"generated_text": seq})
+        if(vars.lua_koboldbridge.restart_sequence is not None and vars.lua_koboldbridge.restart_sequence > 0):
+            genresult(genout[vars.lua_koboldbridge.restart_sequence-1]["generated_text"])
+        else:
+            genselect(genout)
+
+    set_aibusy(0)
+    return
 
 
 #==================================================================#
