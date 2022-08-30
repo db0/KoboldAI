@@ -5024,6 +5024,79 @@ def sendtoapi(txt, min, max):
         set_aibusy(0)
         return
 
+#==================================================================#
+#  Send transformers-style request to KoboldAI API
+#==================================================================#
+def sendtocluster(txt, min, max):
+    # Log request to console
+    if not vars.quiet:
+        print("{0}Tokens:{1}, Txt:{2}{3}".format(colors.YELLOW, min-1, txt, colors.END))
+
+    # Store context in memory to use it for comparison with generated content
+    vars.lastctx = txt
+
+    # Build request JSON data
+    reqdata = {
+        'max_length': max - min + 1,
+        'max_context_length': vars.max_length,
+        'rep_pen': vars.rep_pen,
+        'rep_pen_slope': vars.rep_pen_slope,
+        'rep_pen_range': vars.rep_pen_range,
+        'temperature': vars.temp,
+        'top_p': vars.top_p,
+        'top_k': vars.top_k,
+        'top_a': vars.top_a,
+        'tfs': vars.tfs,
+        'typical': vars.typical,
+        'n': vars.numseqs,
+    }
+    cluster_metadata = {
+        'prompt': txt,
+        'params': reqdata,
+    }
+
+    # Create request
+    while True:
+        req = requests.post(
+            vars.colaburl[:-8] + "/generate/sync",
+            json=reqdata,
+        )
+        js = req.json()
+        if(req.status_code != 200):
+            errmsg = "KoboldAI API Error: Failed to get a reply from the server. Please check the console."
+            print("{0}{1}{2}".format(colors.RED, json.dumps(js, indent=2), colors.END))
+            emit('from_server', {'cmd': 'errmsg', 'data': errmsg}, broadcast=True)
+            set_aibusy(0)
+            return
+        print("{0}{1}{2}".format(colors.RED, json.dumps(js, indent=2), colors.END))
+        genout = js
+
+        for i in range(vars.numseqs):
+            vars.lua_koboldbridge.outputs[i+1] = genout[i]
+
+        execute_outmod()
+        if(vars.lua_koboldbridge.regeneration_required):
+            vars.lua_koboldbridge.regeneration_required = False
+            genout = []
+            for i in range(vars.numseqs):
+                genout.append(vars.lua_koboldbridge.outputs[i+1])
+                assert type(genout[-1]) is str
+
+        if(len(genout) == 1):
+            genresult(genout[0])
+        else:
+            # Convert torch output format to transformers
+            seqs = []
+            for seq in genout:
+                seqs.append({"generated_text": seq})
+            if(vars.lua_koboldbridge.restart_sequence is not None and vars.lua_koboldbridge.restart_sequence > 0):
+                genresult(genout[vars.lua_koboldbridge.restart_sequence-1]["generated_text"])
+            else:
+                genselect(genout)
+
+        set_aibusy(0)
+        return
+
 
 #==================================================================#
 #  Send text to TPU mesh transformer backend
