@@ -2032,8 +2032,8 @@ def load_model(use_gpu=True, gpu_layers=None, disk_layers=None, initial_load=Fal
         else:
             args.configname = vars.model + "/" + online_model
         vars.oaiurl = vars.oaiengines + "/{0}/completions".format(online_model)
-    
-    
+
+
     # If transformers model was selected & GPU available, ask to use CPU or GPU
     if(vars.model not in ["InferKit", "Colab", "API", "CLUSTER", "OAI", "GooseAI" , "ReadOnly", "TPUMeshTransformerGPTJ", "TPUMeshTransformerGPTNeoX"]):
         vars.allowsp = True
